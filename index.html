@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sensor test</title>
+<style>
+:root{color-scheme:dark;--bg:#0c1417;--panel:#142126;--ink:#eef2f0;--dim:#93a5a4;--gold:#e6b23a;--ok:#43c472;--bad:#ff8a70;--line:#2a3d43}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:15px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 10px;cursor:pointer;touch-action:manipulation}
+button:active{background:#1d3036}
+[hidden]{display:none!important}
+#menu{max-width:520px;margin:0 auto;padding:16px}
+#menu h1{font-size:22px;margin:4px 0 2px}
+#sense{color:var(--dim);margin:0 0 14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid button{min-height:56px;text-align:left}
+.grid button small{display:block;color:var(--dim);font-size:12px;margin-top:2px}
+.grid .wide{grid-column:1/-1}
+#twoOpt{width:100%;margin-top:12px}
+#test{position:fixed;inset:0;display:flex;flex-direction:column;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+#test header{display:flex;align-items:center;gap:10px;padding:8px 12px}
+#test header button{padding:8px 12px}
+#tname{flex:1;font-weight:600}
+#score{color:var(--dim);font-size:13px}
+#cv{flex:1;width:100%;min-height:0;touch-action:none;display:block}
+#test footer{padding:6px 12px 12px}
+#verdict{min-height:22px;font-weight:600}
+#verdict.ok{color:var(--ok)}#verdict.bad{color:var(--bad)}#verdict.info{color:var(--gold)}
+#live{min-height:20px;color:var(--dim);font-size:13px;font-variant-numeric:tabular-nums}
+.row{display:flex;gap:8px;margin-top:8px}.row button{flex:1}
+</style>
+</head>
+<body>
+<div id="menu">
+  <h1>Sensor test</h1>
+  <p id="sense">Sensors: off (they switch on with the first test)</p>
+  <div class="grid">
+    <button data-t="swipe">Swipe<small>from the ring, the arrow's way</small></button>
+    <button data-t="cgrip">C / U grip<small>from the dot round the curve</small></button>
+    <button data-t="flick">Tap + flick<small>tap the grip, flick the arrow's way</small></button>
+    <button data-t="gate">Tilt gate + swipe<small>hold the lean in the green, swipe</small></button>
+    <button data-t="turn">Turn<small>turn the phone the arrow's way</small></button>
+    <button data-t="counter">Counter-turn<small>turn against the red arrow</small></button>
+    <button data-t="jolt">Push / pull<small>move the phone sharply the arrow's way</small></button>
+    <button data-t="tilt">Tilt<small>lower the edge the arrow points to</small></button>
+    <button data-t="pull" class="wide">Grip + phone pull<small>tap the grip, then pull the phone the arrow's way</small></button>
+    <button data-t="random" class="wide">Random<small>any of these, a new one each time</small></button>
+  </div>
+  <button id="twoOpt">Two-finger swipes: off</button>
+</div>
+<div id="test" hidden>
+  <header><button id="back">Menu</button><span id="tname"></span><span id="score"></span></header>
+  <canvas id="cv"></canvas>
+  <footer>
+    <div id="verdict"></div>
+    <div id="live"></div>
+    <div class="row"><button id="retry">Retry this one</button><button id="next">Next</button></div>
+  </footer>
+</div>
+<script>
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const FC_TOL=.6;
+const C_EXTRA=650,C_RMIN=40,C_RMAX=62;
+const CSHAPE={c:0,r:Math.PI,u:-Math.PI/2,n:Math.PI/2};
+const PAIR_GAP=140,PAIR_ROOM=120,PAIR_SIDE=50;
+const pairRoom=(p,a,B)=>{const dx=Math.cos(a),dy=Math.sin(a);let t=1e9;
+  if(dx>1e-6)t=Math.min(t,(B[2]-p[0])/dx);if(dx<-1e-6)t=Math.min(t,(B[0]-p[0])/dx);if(dy>1e-6)t=Math.min(t,(B[3]-p[1])/dy);if(dy<-1e-6)t=Math.min(t,(B[1]-p[1])/dy);return t};
+function pairLay(ps,dirs,B,S){
+  const q=ps.map(p=>[p[0],p[1]]);
+  for(let it=0;it<8;it++){
+    let dx=q[1][0]-q[0][0],dy=q[1][1]-q[0][1],d=Math.hypot(dx,dy);
+    if(d<PAIR_GAP){if(d<1){const a=(dirs[0]+dirs[1])/2+Math.PI/2;dx=Math.cos(a);dy=Math.sin(a)}else{dx/=d;dy/=d}const k=(PAIR_GAP-d)/2;
+      q[0][0]-=dx*k;q[0][1]-=dy*k;q[1][0]+=dx*k;q[1][1]+=dy*k}
+    q.forEach((p,k)=>{const t=pairRoom(p,dirs[k],B);if(t<PAIR_ROOM){p[0]-=Math.cos(dirs[k])*(PAIR_ROOM-t);p[1]-=Math.sin(dirs[k])*(PAIR_ROOM-t)}
+      p[0]=clamp(p[0],Math.max(B[0]+PAIR_SIDE,S[0]),Math.min(B[2]-PAIR_SIDE,S[2]));p[1]=clamp(p[1],S[1],S[3])})}
+  return q.map((p,k)=>[p[0]-ps[k][0],p[1]-ps[k][1]]);
+}
+const FLICK_MS=[1000,1100],FLICK_TOL=.7;
+const SWIPE_TOL=.87,SWIPE_MIN=22;
+function cJudge(pts,g,hit){
+  const n=pts.length;if(n<2)return 'shape';const a=pts[0],z=pts[n-1],H=Math.hypot;
+  if(H(z[0]-g.ex,z[1]-g.ey)>hit)return 'miss';
+  const cum=[0];for(let i=1;i<n;i++)cum.push(cum[i-1]+H(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]));
+  const L=cum[n-1],chord=H(z[0]-a[0],z[1]-a[1]);if(L<.45*g.R*Math.abs(g.sw)||chord<.35*g.R)return 'shape';
+  const q=[];for(let k=0,j=1;k<=16;k++){const d=L*k/16;while(j<n-1&&cum[j]<d)j++;const sl=cum[j]-cum[j-1]||1,t=Math.min(1,Math.max(0,(d-cum[j-1])/sl));q.push([pts[j-1][0]+(pts[j][0]-pts[j-1][0])*t,pts[j-1][1]+(pts[j][1]-pts[j-1][1])*t])}
+  let turn=0,prev=null;for(let k=1;k<q.length;k++){const h=Math.atan2(q[k][1]-q[k-1][1],q[k][0]-q[k-1][0]);if(prev!==null)turn+=Math.atan2(Math.sin(h-prev),Math.cos(h-prev));prev=h}
+  let bulge=0,side=0;const dx=z[0]-a[0],dy=z[1]-a[1];for(const p of q){const c=dx*(p[1]-a[1])-dy*(p[0]-a[0]);if(Math.abs(c)/chord>Math.abs(bulge)){bulge=c/chord;side=Math.sign(c)}}
+  const sg=Math.sign(g.sw);
+  if(Math.abs(bulge)>=.12*chord&&side===sg||Math.abs(turn)>=.3*Math.abs(g.sw)&&Math.sign(turn)===-sg)return 'wrong';
+  if(Math.abs(bulge)<.2*chord||Math.sign(turn)!==sg||Math.abs(turn)<.5*Math.abs(g.sw)||Math.abs(turn)>1.8*Math.abs(g.sw))return 'shape';
+  return 'ok'}
+const TURN_MIN=45,TURN_DEG=30,TURN_CTR=18,TURN_WRONG=15,TURN_PER=1.5,SHOVE_PX=70,SHOVE_TOL=.85,SHOVE_WRONG=2.2,SHOVE_PER=1.3,TILT_MIN=15,GATE_MAX=40,GATE_TOL=12,GATE_LEAN=[15,70],MO_F=[.25,1.05];
+const SHOVE_V=.15,SHOVE_REST=.8,SHOVE_QUIET=.1,SHOVE_LEAK=.6;
+const wrapDeg=d=>((d%360)+540)%360-180;
+const rollOf=u=>Math.atan2(-u[0],u[1])*180/Math.PI;
+const bankOf=u=>Math.atan2(-u[0],Math.hypot(u[1],u[2]))*180/Math.PI;
+const motion={on:false,live:false,sim:false,gyro:false,wired:false,u:null,u0:null,tw:0,st:0,spike:null,vel:[0,0],quiet:0,armed:false,gs:null,peak:0,
+  use(){return this.on&&(this.live||this.sim)},
+  feed(e){const m=this;
+    if(e.g&&isFinite(e.g[0])){const n=Math.hypot(e.g[0],e.g[1],e.g[2])||1,v=[e.g[0]/n,e.g[1]/n,e.g[2]/n],k=m.u?.35:1;m.u=m.u?[m.u[0]+(v[0]-m.u[0])*k,m.u[1]+(v[1]-m.u[1])*k,m.u[2]+(v[2]-m.u[2])*k]:v;
+      const l=Math.hypot(m.u[0],m.u[1],m.u[2])||1;m.u=[m.u[0]/l,m.u[1]/l,m.u[2]/l]}
+    const w=e.rot||(e.rate!=null?[0,0,e.rate]:null);
+    if(w&&w.every(isFinite)){m.gyro=true;const dt=e.dt||1/60,U=m.u||[0,0,1],h=Math.hypot(U[1],U[2]);m.tw-=w[2]*dt;
+      if(h>.2)m.st+=(w[1]*U[2]-w[2]*U[1])/h*dt}
+    let a=null;const dt=e.dt||1/60;
+    if(e.acc&&isFinite(e.acc[0]))a=e.acc;
+    else if(e.g&&isFinite(e.g[0])){if(!m.gs)m.gs=e.g.slice();a=[e.g[0]-m.gs[0],e.g[1]-m.gs[1],e.g[2]-m.gs[2]];const k=1-Math.exp(-dt/.35);m.gs=m.gs.map((x,i)=>x+(e.g[i]-x)*k)}
+    if(a){const s=Math.hypot(a[0],a[1]),lk=Math.exp(-dt/SHOVE_LEAK);m.vel=[m.vel[0]*lk+a[0]*dt,m.vel[1]*lk+a[1]*dt];
+      if(s<SHOVE_REST){m.quiet+=dt;if(m.quiet>=SHOVE_QUIET){m.vel=[0,0];m.armed=true;m.peak=0}}else{m.quiet=0;m.peak=Math.max(m.peak,s)}
+      const v=Math.hypot(m.vel[0],m.vel[1]);if(m.armed&&!m.spike&&v>=SHOVE_V){m.spike={dir:Math.atan2(-m.vel[1],m.vel[0]),v,g:m.peak};m.armed=false}}},
+  zero(){this.u0=this.u?this.u.slice():null;this.tw=0;this.st=0;this.spike=null;this.vel=[0,0];this.armed=this.quiet>=SHOVE_QUIET},
+  drop(){this.spike=null},
+  turn(){const m=this,big=(a,b)=>Math.abs(a)>Math.abs(b)?a:b;if(m.gyro)return big(m.st,m.tw);
+    if(!m.u||!m.u0)return 0;const tw=Math.hypot(m.u[0],m.u[1])<.3||Math.hypot(m.u0[0],m.u0[1])<.3?0:wrapDeg(rollOf(m.u)-rollOf(m.u0));return big(bankOf(m.u)-bankOf(m.u0),tw)},
+  roll(){const m=this;return m.u&&Math.hypot(m.u[0],m.u[1])>=.3?rollOf(m.u):null},
+  tilt(){const m=this,u=m.u,u0=m.u0;if(!u||!u0)return {deg:0,dir:0,x:0,y:0};
+    const d=[u[0]-u0[0],u[1]-u0[1],u[2]-u0[2]];let p=[0,u0[2],-u0[1]];const l=Math.hypot(p[1],p[2]);p=l>1e-6?[0,p[1]/l,p[2]/l]:[0,0,-1];
+    let r=[-1+u0[0]*u0[0],u0[0]*u0[1],u0[0]*u0[2]];const rl=Math.hypot(r[0],r[1],r[2]);r=rl>1e-6?[r[0]/rl,r[1]/rl,r[2]/rl]:[-1,0,0];
+    const x=d[0]*r[0]+d[1]*r[1]+d[2]*r[2],y=d[1]*p[1]+d[2]*p[2],deg=Math.acos(clamp(u[0]*u0[0]+u[1]*u0[1]+u[2]*u0[2],-1,1))*180/Math.PI;return {deg,dir:Math.atan2(y,x),x,y}},
+  shove(){return this.spike}};
+function motionStart(){
+  if(motion.wired||typeof window==='undefined'||!window.DeviceMotionEvent)return;motion.wired=true;
+  window.addEventListener('devicemotion',e=>{if(!motion.on||PAUSE.on)return;const g=e.accelerationIncludingGravity,a=e.acceleration,r=e.rotationRate;
+    if(!g||g.x==null)return;let dt=e.interval>0?(e.interval>1?e.interval/1000:e.interval):1/60;dt=Math.min(.1,Math.max(.004,dt));
+    motion.feed({dt,g:[g.x,g.y,g.z],acc:a&&a.x!=null?[a.x,a.y,a.z]:null,rot:r&&r.gamma!=null?[r.alpha||0,r.beta||0,r.gamma]:null});
+    if(!motion.live){motion.live=true;motionShow()}},{passive:true});
+}
+function motionEnable(v){
+  motion.on=!!v;try{localStorage.setItem('gp-motion',motion.on?'1':'0')}catch(e){}
+  if(motion.on){const D=window.DeviceMotionEvent;
+    if(D&&typeof D.requestPermission==='function')D.requestPermission().then(s=>{if(s==='granted')motionStart();else{motion.on=false;motionShow()}}).catch(()=>{});
+    else motionStart()}
+  motionShow();
+}
+const TWO_SIM_MS=200;
+const PAUSE={on:false};
+const $=id=>document.getElementById(id),angd=(a,b)=>Math.abs(Math.atan2(Math.sin(a-b),Math.cos(a-b))),dg=r=>Math.round(r*180/Math.PI);
+const NAMES={swipe:'Swipe',cgrip:'C / U grip',flick:'Tap + flick',gate:'Tilt gate + swipe',turn:'Turn',counter:'Counter-turn',jolt:'Push / pull',tilt:'Tilt',pull:'Grip + phone pull',random:'Random'};
+const TYPES=['swipe','cgrip','flick','pull','gate','turn','counter','jolt','tilt'],PHONE={gate:1,turn:1,counter:1,jolt:1,tilt:1};
+const way8=()=>(Math.random()*8|0)*Math.PI/4,rnd=(a,b)=>a+Math.random()*(b-a);
+let pick=null,R=null,two='off',score={};
+function motionShow(){$('sense').textContent=!motion.on?'Sensors: off (they switch on with the first test)':motion.live?'Sensors: live':'Sensors: on, no readings yet'}
+const cv=$('cv'),cx2=cv.getContext('2d');let W=0,H=0,DPR=1;
+function fit(){const r=cv.getBoundingClientRect();DPR=Math.min(3,window.devicePixelRatio||1);W=r.width;H=r.height;cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR)}
+const sizes=()=>{const m=Math.min(W,H),sz=clamp(m*.09,20,34),ring=sz*1.3,TR=clamp(m*.06,16,24);return {sz,ring,hitR:Math.max(52,ring*1.6),TR,gHit:Math.max(34,TR*1.7)}};
+function plan(t){const r={t};const c=[W/2,H*.48];
+  if(t==='swipe'){r.two=two==='on'||two==='random'&&Math.random()<.5;
+    if(r.two){const dirs=[way8(),way8()],ps=[[c[0]-30+rnd(-20,20),c[1]+rnd(-30,30)],[c[0]+30+rnd(-20,20),c[1]+rnd(-30,30)]],top=cv.getBoundingClientRect().top;
+      const off=pairLay(ps,dirs,[0,-top,W,innerHeight-top],[24,24,W-24,H-24]);r.rings=ps.map((p,k)=>({x:p[0]+off[k][0],y:p[1]+off[k][1],a:dirs[k]}))}
+    else r.rings=[{x:rnd(W*.3,W*.7),y:rnd(H*.35,H*.62),a:way8()}]}
+  else if(t==='gate'){r.rings=[{x:c[0],y:H*.4,a:way8()}];r.gate=(Math.random()<.5?-1:1)*Math.round(rnd(GATE_LEAN[0],GATE_MAX))}
+  else if(t==='cgrip'){const E=[rnd(W*.4,W*.6),rnd(H*.42,H*.56)],Rr=rnd(C_RMIN,C_RMAX),shape='crun'[Math.random()*4|0],sg=Math.random()<.5?1:-1,sw=200*Math.PI/180;
+    const ae=CSHAPE[shape]-sg*(Math.PI-sw/2),cx=E[0]-Rr*Math.cos(ae),cy=E[1]-Rr*Math.sin(ae),a0=ae-sg*sw;
+    r.g={cx,cy,R:Rr,a0,ae,sg,sw:sg*sw,sx:cx+Rr*Math.cos(a0),sy:cy+Rr*Math.sin(a0),ex:E[0],ey:E[1]};r.shape=shape}
+  else if(t==='flick'||t==='pull'){r.grip={x:rnd(W*.3,W*.7),y:rnd(H*.38,H*.6)};r.a=way8()}
+  else if(t==='turn'||t==='counter')r.cw=Math.random()<.5;
+  else r.a=way8();
+  return r}
+function start(r){R={...r,res:null,info:null,pend:[null,null],trace:null,phase:r.t==='flick'||r.t==='pull'?'tap':null,t0:performance.now(),seen:null};
+  if(PHONE[R.t])motion.zero();$('tname').textContent=NAMES[pick]+(pick==='random'?': '+NAMES[R.t]:'')+(R.two?' (two fingers)':'');say('','');showScore()}
+function next(){const t=pick==='random'?TYPES[Math.random()*TYPES.length|0]:pick;start(plan(t))}
+function done(ok,txt){if(R.res)return;R.res={ok,txt};const s=score[R.t]||(score[R.t]={ok:0,n:0});s.n++;if(ok)s.ok++;say(txt,ok?'ok':'bad');showScore()}
+function say(txt,cls){const v=$('verdict');v.textContent=txt;v.className=cls}
+function showScore(){const s=R&&score[R.t];$('score').textContent=s?`${s.ok} of ${s.n} landed`:''}
+function swipeJudge(rg,a,x,y){const {hitR}=sizes(),d=Math.hypot(x-rg.x,y-rg.y),off=angd(a,rg.a);
+  if(d>hitR)return {ok:false,txt:`Wrong spot: started ${Math.round(d)} px from the ring (within ${Math.round(hitR)})`};
+  return off<=SWIPE_TOL?{ok:true,txt:`Landed: ${dg(off)}° off the arrow`}:{ok:false,txt:`Wrong way: ${dg(off)}° off the arrow (within ${dg(SWIPE_TOL)}°)`}}
+function swipe(a,x,y,m){if(!R||R.res)return;const t=R.t;
+  if(t==='swipe'&&!R.two){const v=swipeJudge(R.rings[0],a,x,y);done(v.ok,v.txt);return}
+  if(t==='swipe'){const {hitR}=sizes();let k=-1,best=1e9;R.rings.forEach((g,i)=>{const d=Math.hypot(x-g.x,y-g.y);if(d<=hitR&&d<best){best=d;k=i}});
+    if(k<0){done(false,'Wrong spot: started on neither ring');return}
+    const off=angd(a,R.rings[k].a),side=R.rings[k].x<R.rings[1-k].x?'left':'right';
+    if(off>SWIPE_TOL){done(false,`Wrong way on the ${side} ring: ${dg(off)}° off (within ${dg(SWIPE_TOL)}°)`);return}
+    if(R.pend[k]){done(false,`The ${side} ring twice`);return}
+    R.pend[k]=m;R.info=`${side} ring in, ${dg(off)}° off`;say(R.info+'; now the other','info');
+    if(R.pend[0]&&R.pend[1]){const [p0,p1]=R.pend,gap=Math.abs(p0.t-p1.t),both=p0.id!==p1.id&&Math.max(p0.t,p1.t)<=Math.min(p0.u,p1.u);
+      done(gap<=TWO_SIM_MS&&both,gap<=TWO_SIM_MS&&both?`Together: started ${Math.round(gap)} ms apart`:!both?`Not together: one finger was up before the other came down (${Math.round(gap)} ms apart)`:`Not together: started ${Math.round(gap)} ms apart (within ${TWO_SIM_MS})`)}
+    return}
+  if(t==='gate'){const r=motion.roll(),inZone=r==null||Math.abs(wrapDeg(r-R.gate))<=GATE_TOL;
+    if(!inZone){R.info=`Ignored: the phone's roll is ${Math.round(r)}°, the green is ${R.gate}° ± ${GATE_TOL}°`;say(R.info,'info');return}
+    const v=swipeJudge(R.rings[0],a,x,y);done(v.ok,v.txt+(r==null?' (phone flat: no gate)':`, roll ${Math.round(r)}°`));return}
+  if((t==='flick'||t==='pull')&&R.phase==='flick'){const ms=performance.now()-R.ft,off=angd(a,R.a);
+    done(off<=FLICK_TOL&&ms<=FLICK_MS[0],ms>FLICK_MS[0]?`Too slow: ${Math.round(ms)} ms (within ${FLICK_MS[0]})`:off<=FLICK_TOL?`Landed: ${dg(off)}° off, ${Math.round(ms)} ms`:`Wrong way: ${dg(off)}° off (within ${dg(FLICK_TOL)}°)`);return}
+  if(PHONE[t]){say('This one is the phone: move the phone, not your thumb','info')}}
+const downs=new Map(),pt=e=>{const r=cv.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]};
+cv.addEventListener('pointerdown',e=>{e.preventDefault();const p=pt(e),now=performance.now();downs.set(e.pointerId,{x:p[0],y:p[1],t:now,pts:[p]});if(!R||R.res)return;
+  if(R.t==='cgrip'&&!R.trace){const {gHit}=sizes(),d=Math.hypot(p[0]-R.g.sx,p[1]-R.g.sy);if(d<=gHit*1.2)R.trace=e.pointerId;else done(false,`Missed: start on the dot (${Math.round(d)} px away, within ${Math.round(gHit*1.2)})`)}
+  if((R.t==='flick'||R.t==='pull')&&R.phase==='tap'){const {gHit}=sizes(),d=Math.hypot(p[0]-R.grip.x,p[1]-R.grip.y);if(d<=gHit){R.phase='flick';R.ft=now;if(R.t==='pull')motion.zero();say(R.t==='pull'?'Now pull the phone the arrow\'s way':'Now flick the arrow\'s way','info')}else done(false,`Missed the grip: ${Math.round(d)} px off (within ${Math.round(gHit)})`)}});
+cv.addEventListener('pointermove',e=>{const d=downs.get(e.pointerId);if(d)d.pts.push(pt(e))});
+cv.addEventListener('pointercancel',e=>{downs.delete(e.pointerId);if(R&&R.trace===e.pointerId)R.trace=null});
+cv.addEventListener('pointerup',e=>{const d=downs.get(e.pointerId);downs.delete(e.pointerId);if(!d||!R||R.res)return;const p=pt(e);d.pts.push(p);
+  if(R.t==='cgrip'){if(R.trace!==e.pointerId)return;const {gHit}=sizes(),v=cJudge(d.pts,R.g,gHit*1.3),z=d.pts[d.pts.length-1];R.seen=d.pts;
+    done(v==='ok',{ok:'Landed: a C the right way round',miss:`Ended off the grip: ${Math.round(Math.hypot(z[0]-R.g.ex,z[1]-R.g.ey))} px from it (within ${Math.round(gHit*1.3)})`,wrong:'Curved the wrong way round',shape:'Not a C (too straight, too short or too round)'}[v]);return}
+  const dx=p[0]-d.x,dy=p[1]-d.y,len=Math.hypot(dx,dy);R.seen=d.pts;
+  if(len<SWIPE_MIN){if(R.t!=='flick'&&R.t!=='pull'||R.phase==='flick')say(`Too short to be a swipe: ${Math.round(len)} px (${SWIPE_MIN}+)`,'info');return}
+  swipe(Math.atan2(dy,dx),d.x,d.y,{id:e.pointerId,t:d.t,u:performance.now()})});
+function phoneStep(){if(!R||R.res)return;
+  if(R.t==='pull'){if(R.phase!=='flick')return;const sv=motion.shove();if(!sv)return;const off=angd(sv.dir,R.a);
+    if(off<=SHOVE_TOL)done(true,`Landed: pulled ${dg(off)}° off the arrow, ${sv.v.toFixed(2)} m/s`);else if(off>=SHOVE_WRONG)done(false,`Wrong way: pulled ${dg(off)}° off the arrow (${dg(SHOVE_WRONG)}° or more fails)`);
+    else{say(`Off to one side: ${dg(off)}° (${dg(SHOVE_TOL)}° lands): not counted, go again`,'info');motion.drop()}return}
+  if(!PHONE[R.t]||R.t==='gate')return;
+  if(R.t==='turn'||R.t==='counter'){const want=R.t==='turn'?R.cw:!R.cw,s=motion.turn()*(want?1:-1),need=R.t==='turn'?TURN_DEG:TURN_CTR;R.s=s;
+    if(s>=need)done(true,`Landed: turned ${Math.round(s)}° (${need} lands)`);else if(s<=-TURN_WRONG)done(false,`Wrong way: ${Math.round(s)}° (−${TURN_WRONG} fails)`)}
+  else if(R.t==='jolt'){const sv=motion.shove();if(!sv)return;const off=angd(sv.dir,R.a);
+    if(off<=SHOVE_TOL)done(true,`Landed: ${dg(off)}° off the arrow, ${sv.v.toFixed(2)} m/s`);
+    else if(off>=SHOVE_WRONG)done(false,`Wrong way: ${dg(off)}° off the arrow (${dg(SHOVE_WRONG)}° or more fails)`);
+    else{say(`Off to one side: ${dg(off)}° (${dg(SHOVE_TOL)}° lands): not counted, go again`,'info');motion.drop()}}
+  else if(R.t==='tilt'){const tl=motion.tilt();if(tl.deg>=TILT_MIN){const off=angd(tl.dir,R.a);done(off<=FC_TOL,off<=FC_TOL?`Landed: ${dg(off)}° off the arrow`:`Wrong way: ${dg(off)}° off the arrow (within ${dg(FC_TOL)}°)`)}}}
+function live(){const L=$('live');if(!R){L.textContent='';return}
+  if(R.t==='pull'&&R.phase==='flick'&&motion.live){L.textContent=`speed ${Math.hypot(motion.vel[0],motion.vel[1]).toFixed(2)} m/s (a pull at ${SHOVE_V}), ${motion.armed?'ready':'hold still first'}`;return}
+  if(!PHONE[R.t]){const p=R.seen;if(p&&p.length>1){const a=p[0],z=p[p.length-1];L.textContent=`last finger: ${Math.round(Math.hypot(z[0]-a[0],z[1]-a[1]))} px at ${dg(Math.atan2(z[1]-a[1],z[0]-a[0]))}° (0 right, 90 down)`}else L.textContent='';return}
+  if(!motion.live){L.textContent=motion.on?'No sensor readings: this page needs a phone, over https, outside the Artifact viewer':'Sensors off';return}
+  if(R.t==='turn'||R.t==='counter')L.textContent=`turned ${Math.round(motion.turn())}° clockwise: in the screen ${Math.round(motion.tw)}°, as a wheel ${Math.round(motion.st)}°`;
+  else if(R.t==='jolt')L.textContent=`speed ${Math.hypot(motion.vel[0],motion.vel[1]).toFixed(2)} m/s (a jolt at ${SHOVE_V}), ${motion.armed?'ready':'hold still first'}`;
+  else if(R.t==='tilt'){const tl=motion.tilt();L.textContent=`tilt ${Math.round(tl.deg)}° toward ${dg(tl.dir)}° (counts at ${TILT_MIN}°)`}
+  else{const r=motion.roll();L.textContent=r==null?'roll: phone flat, no gate':`roll ${Math.round(r)}°, the green ${R.gate}° ± ${GATE_TOL}°`}}
+const C={ring:'#e6b23a',ok:'#43c472',bad:'#ff8a70',ink:'#eef2f0',dim:'#5b6f72',red:'#ff6b57'};
+function arrow(x,y,a,len,col,w=4){const ex=x+Math.cos(a)*len,ey=y+Math.sin(a)*len;cx2.strokeStyle=cx2.fillStyle=col;cx2.lineWidth=w;cx2.lineCap='round';
+  cx2.beginPath();cx2.moveTo(x,y);cx2.lineTo(ex,ey);cx2.stroke();const h=12;cx2.beginPath();cx2.moveTo(ex+Math.cos(a)*4,ey+Math.sin(a)*4);
+  cx2.lineTo(ex-Math.cos(a-.5)*h,ey-Math.sin(a-.5)*h);cx2.lineTo(ex-Math.cos(a+.5)*h,ey-Math.sin(a+.5)*h);cx2.closePath();cx2.fill()}
+function ringAt(g,col){const {ring}=sizes();cx2.strokeStyle=col;cx2.lineWidth=4;cx2.beginPath();cx2.arc(g.x,g.y,ring,0,7);cx2.stroke();arrow(g.x+Math.cos(g.a)*ring,g.y+Math.sin(g.a)*ring,g.a,ring*1.1,col)}
+function curved(x,y,r,cw,col){const a0=cw?-2.4:-.74,a1=cw?.9:-4.04;cx2.strokeStyle=cx2.fillStyle=col;cx2.lineWidth=5;cx2.beginPath();cx2.arc(x,y,r,Math.min(a0,a1),Math.max(a0,a1));cx2.stroke();
+  const ex=x+r*Math.cos(a1),ey=y+r*Math.sin(a1),t=a1+(cw?Math.PI/2:-Math.PI/2),h=14;cx2.beginPath();cx2.moveTo(ex+Math.cos(t)*h,ey+Math.sin(t)*h);
+  cx2.lineTo(ex+Math.cos(t+2.5)*h,ey+Math.sin(t+2.5)*h);cx2.lineTo(ex+Math.cos(t-2.5)*h,ey+Math.sin(t-2.5)*h);cx2.closePath();cx2.fill()}
+function phoneAt(x,y,s,rot,col){cx2.save();cx2.translate(x,y);cx2.rotate(rot);cx2.strokeStyle=col;cx2.lineWidth=3;const w=s*.62,h=s;cx2.beginPath();
+  if(cx2.roundRect)cx2.roundRect(-w/2,-h/2,w,h,7);else cx2.rect(-w/2,-h/2,w,h);cx2.stroke();cx2.fillStyle=col;cx2.fillRect(-w*.18,-h/2+5,w*.36,3);cx2.restore()}
+function draw(){cx2.setTransform(DPR,0,0,DPR,0,0);cx2.clearRect(0,0,W,H);if(!R)return;const t=R.t,col=R.res?(R.res.ok?C.ok:C.bad):C.ring,{gHit,TR}=sizes(),c=[W/2,H*.46];
+  if(t==='swipe'||t==='gate')R.rings.forEach((g,k)=>ringAt(g,R.pend[k]?C.ok:col));
+  if(t==='gate'){const g=R.rings[0],bw=Math.min(240,W*.7),bx=W/2-bw/2,by=g.y+sizes().ring*3,u=v=>bx+bw/2+clamp(v,-60,60)/60*bw/2,r=motion.roll();
+    cx2.fillStyle='#24363b';cx2.fillRect(bx,by,bw,10);cx2.fillStyle=C.ok;cx2.fillRect(u(R.gate-GATE_TOL),by-2,u(R.gate+GATE_TOL)-u(R.gate-GATE_TOL),14);
+    if(r!=null){cx2.fillStyle=C.ink;cx2.fillRect(u(r)-2,by-8,4,26)}}
+  if(t==='cgrip'){const g=R.g;cx2.setLineDash([7,8]);cx2.strokeStyle=col;cx2.lineWidth=4;cx2.beginPath();cx2.arc(g.cx,g.cy,g.R,g.a0,g.ae,g.sg<0);cx2.stroke();cx2.setLineDash([]);
+    cx2.fillStyle=col;cx2.beginPath();cx2.arc(g.sx,g.sy,TR*.55,0,7);cx2.fill();cx2.strokeStyle=col;cx2.lineWidth=3;cx2.beginPath();cx2.arc(g.ex,g.ey,TR,0,7);cx2.stroke()}
+  if(t==='flick'||t==='pull'){cx2.fillStyle=R.phase==='flick'?C.ok:col;cx2.beginPath();cx2.arc(R.grip.x,R.grip.y,TR,0,7);cx2.fill();if(R.phase==='flick'){arrow(R.grip.x,R.grip.y,R.a,gHit*1.6,R.res?col:C.ink);
+    if(t==='pull')phoneAt(R.grip.x+Math.cos(R.a)*(gHit*1.6+34),R.grip.y+Math.sin(R.a)*(gHit*1.6+34),40,0,R.res?col:C.ink)}}
+  if(t==='turn'||t==='counter'){const r=Math.min(W,H)*.24;curved(c[0],c[1],r,R.cw,t==='counter'?C.red:col);if(t==='counter')curved(c[0],c[1],r*.62,!R.cw,col);
+    phoneAt(c[0],c[1],r*.75,motion.turn()*Math.PI/180,C.ink)}
+  if(t==='jolt'){phoneAt(c[0],c[1],70,0,C.ink);arrow(c[0]+Math.cos(R.a)*55,c[1]+Math.sin(R.a)*55,R.a,70,col)}
+  if(t==='tilt'){const r=Math.min(W,H)*.28,tl=motion.tilt(),k=Math.min(1.2,tl.deg/TILT_MIN);cx2.strokeStyle=C.dim;cx2.lineWidth=2;cx2.beginPath();cx2.arc(c[0],c[1],r,0,7);cx2.stroke();
+    arrow(c[0],c[1],R.a,r*.9,col);cx2.fillStyle=C.ink;cx2.beginPath();cx2.arc(c[0]+Math.cos(tl.dir)*k*r,c[1]+Math.sin(tl.dir)*k*r,9,0,7);cx2.fill()}
+  const p=R.seen;if(p&&p.length>1){cx2.strokeStyle='rgba(238,242,240,.55)';cx2.lineWidth=3;cx2.beginPath();cx2.moveTo(p[0][0],p[0][1]);p.forEach(q=>cx2.lineTo(q[0],q[1]));cx2.stroke()}}
+function loop(){phoneStep();live();draw();requestAnimationFrame(loop)}
+document.querySelectorAll('[data-t]').forEach(b=>b.addEventListener('click',()=>{pick=b.dataset.t;motionEnable(true);$('menu').hidden=true;$('test').hidden=false;fit();next()}));
+$('back').onclick=()=>{R=null;$('test').hidden=true;$('menu').hidden=false};
+$('retry').onclick=()=>{if(R)start(R)};
+$('next').onclick=()=>{if(R)next()};
+$('twoOpt').onclick=()=>{two={off:'on',on:'random',random:'off'}[two];$('twoOpt').textContent='Two-finger swipes: '+two};
+addEventListener('resize',()=>{if(!$('test').hidden)fit()});
+motionShow();requestAnimationFrame(loop);
+window.__lab={get R(){return R},start,plan,next,sizes};
+</script>
+</body>
+</html>
